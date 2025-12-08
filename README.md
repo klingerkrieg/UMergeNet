@@ -8,7 +8,7 @@ With approximately **1.7 million trainable parameters**, UMergeNet achieves perf
 ## Architecture
 
 <p align="center">
-  <img src="diagram.png" alt="UMergeNet Architecture " width="600">
+  <img src="diagram.png?20251208" alt="UMergeNet Architecture" width="600">
 </p>
 
 ---
