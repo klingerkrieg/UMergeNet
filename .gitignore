@@ -1,0 +1,12 @@
+
+*/__pycache__
+*/dataset/*
+*.pt
+*.pth
+*.xlsx
+*.eps
+*/yolo11
+/fuseg/runs
+/fuseg/tb_profiler_streams
+/isic2018/DeepLabV3/outputs
+/lars/UNext/outputs
