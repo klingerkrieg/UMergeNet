@@ -216,7 +216,7 @@ class ImageComparisonGenerator:
                     if im is not None:
                         if before_plot is not None:
                             im = before_plot(im)
-                            ax.imshow(im, cmap='gray' if num_classes==1 else None, aspect='auto')
+                        ax.imshow(im, cmap='gray' if num_classes==1 else None, aspect='auto')
                     ax.set_xticks([]); ax.set_yticks([])
                     for spine in ax.spines.values():
                         spine.set_visible(True)
