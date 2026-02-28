@@ -12,15 +12,17 @@ import os
 
 
 #jupyter nbconvert --to script ImageComparisonGenerator.ipynb
-#Version 1.2
+#Version 1.3
 
 class ImageComparisonGenerator:
 
-    def __init__(self, model, model_name1="Prediction", model2=None, model_name2="Prediction"):
+    def __init__(self, model, model_name1="Prediction", model2=None, model_name2="Prediction", model3=None, model_name3="Prediction"):
         self.model  = model
         self.model_name1 = model_name1
         self.model2 = model2
         self.model_name2 = model_name2
+        self.model3 = model3
+        self.model_name3 = model_name3
 
     def get_model_output(self,images, model=None):
         if model is None:
@@ -113,18 +115,22 @@ class ImageComparisonGenerator:
         return img_disp
     
 
-
-    # Output Functions
+    # print images in list
     def save_output_row(self, sample_loader, samples=[0],
                         num_classes=1, do_diff=True, invert_diff_colors=False,
-                        do_save=False):
+                        do_save=False, font_size=22):
         if self.model is None:
             raise Exception("The model is not loaded.")
 
         device = next(self.model.parameters()).device
         self.model.eval()
+        if self.model2 is not None:
+            self.model2.eval()
+        if self.model3 is not None:
+            self.model3.eval()
+
         num_rows = len(samples)
-        fig = plt.figure(figsize=(11, 4*num_rows))
+        fig = plt.figure(figsize=(11, 2*num_rows))
 
         with torch.no_grad():
             for idx, sample_idx in enumerate(samples):
@@ -135,22 +141,47 @@ class ImageComparisonGenerator:
                 mask_vis, ignore_mask = self._prepare_mask_vis(mask, num_classes)
                 pred_vis = self._prepare_prediction_vis(self.get_model_output(img), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
                 img_disp = self._prepare_image_disp(img)
+                
 
-                for col, im in enumerate([img_disp, mask_vis, pred_vis]):
-                    ax = fig.add_axes([
-                        col/3, 1-(idx+1)/num_rows, 1/3, 1/num_rows
-                    ])
+                # Model 2 prediction, if it exists
+                if self.model2 is not None:
+                    img2 = img.to(device)
+                    pred2_vis = self._prepare_prediction_vis(self.get_model_output(img2, model=self.model2), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
+                    num_cols = 4
+
+
+                    # Model 3 prediction, if it exists
+                    if self.model3 is not None:
+                        img3 = img.to(device)
+                        pred3_vis = self._prepare_prediction_vis(self.get_model_output(img3, model=self.model3), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
+                        num_cols = 5
+                    else:
+                        pred3_vis = None
+                else:
+                    pred2_vis = None
+                    pred3_vis = None
+                    num_cols = 3
+
+
+                for col, im in enumerate([img_disp, mask_vis, pred_vis, pred2_vis, pred3_vis]):
+                    ax = fig.add_axes([col/num_cols, 1-(idx+1)/num_rows, 1/num_cols, 1/num_rows])
                     ax.imshow(im, cmap='gray' if num_classes==1 else None, aspect='auto')
                     ax.set_xticks([]); ax.set_yticks([])
+
                     for spine in ax.spines.values():
                         spine.set_visible(True)
                         spine.set_edgecolor('black')
                         spine.set_linewidth(1.5)
+
                     if idx==0:
-                        font_size = 30
                         if col==0: ax.set_title("Image", fontsize=font_size, y=1.0)
                         elif col==1: ax.set_title("Ground Truth", fontsize=font_size, y=1.0)
-                        else: ax.set_title("Prediction", fontsize=font_size, y=1.0)
+                        elif col == 2:
+                            ax.set_title(self.model_name1, fontsize=font_size, y=1.0)
+                        elif col == 3:
+                            ax.set_title(self.model_name2, fontsize=font_size, y=1.0)
+                        elif col == 4:
+                            ax.set_title(self.model_name3, fontsize=font_size, y=1.0)
 
         plt.tight_layout(rect=[0,0,1,0.96])
         if do_save: fig.savefig(do_save, format='eps', bbox_inches='tight', pad_inches=0.1)
@@ -249,4 +280,31 @@ def load_model(model, model_file_name):
 
     model.load_state_dict(filtered_state_dict, strict=False)
     return model
+
+
+# In[ ]:
+
+
+from PIL import Image
+def combine_images(img1_path, img2_path, output):
+    # Abrir imagens EPS
+    img1 = Image.open(img1_path)
+    img2 = Image.open(img2_path)
+
+    # Converter para RGB (evita problemas)
+    img1 = img1.convert("RGB")
+    img2 = img2.convert("RGB")
+
+    # Criar nova imagem com largura combinada
+    total_width = img1.width + img2.width
+    max_height = max(img1.height, img2.height)
+
+    combined = Image.new("RGB", (total_width, max_height), (255, 255, 255))
+
+    # Colocar imagens lado a lado
+    combined.paste(img1, (0, 0))
+    combined.paste(img2, (img1.width, 0))
+
+    # Salvar como EPS novamente
+    combined.save(output, format="EPS")
 

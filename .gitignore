@@ -10,3 +10,5 @@
 /fuseg/tb_profiler_streams
 /isic2018/DeepLabV3/outputs
 /lars/UNext/outputs
+/isic2018/UMergeNet/UMergeNet-axial-1-epochs300-best/data
+/isic2018/UMergeNet/UMergeNet-axial-1-epochs300-best
