@@ -7,22 +7,56 @@
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 import os
-
+from scipy.ndimage import binary_erosion
+from enum import Enum
 
 #jupyter nbconvert --to script ImageComparisonGenerator.ipynb
-#Version 1.3
+#Version 1.5
+# DiffMode, Drawing rects, arrows 
+class DiffMode(Enum):
+    DIAGONAL_DOTS_WITH_BORDER   = 1
+    DIAGONAL_DOTS               = 2
+    HORIZONTAL_DOTS_WITH_BORDER = 3
+    HORIZONTAL_DOTS             = 4
+    SPARSE_DOTS_WITH_BORDER     = 5
+    SPARSE_DOTS                 = 6
+    THIN_DOTS_WITH_BORDER       = 7
+    THIN_DOTS                   = 8
+    APPLY_RED                   = 9
+    APPLY_RED_WITH_ALPHA        = 10
+
 
 class ImageComparisonGenerator:
 
-    def __init__(self, model, model_name1="Prediction", model2=None, model_name2="Prediction", model3=None, model_name3="Prediction"):
+    color_map = {0:[0.9, 0.9, 0.0],
+                 1:[0.3, 0.3, 1.0 ],
+                 2:[0.7, 0.7, 1.0]}
+    rectangle_color = (0.2, 0.8, 0.2)
+
+    def __init__(self, model, model_name1="Prediction", model2=None, model_name2="Prediction", model3=None, model_name3="Prediction", color_map=None):
         self.model  = model
         self.model_name1 = model_name1
         self.model2 = model2
         self.model_name2 = model_name2
         self.model3 = model3
         self.model_name3 = model_name3
+
+        if color_map == 'binary':
+            self.set_binary_color_map()
+        elif color_map is not None:
+            self.color_map = color_map
+
+    def set_binary_color_map(self):
+        self.color_map = {0:[0.0, 0.0, 0.0], 1:[1.0, 1.0, 1.0]}
+
+    def set_color_map(self, color_map):
+        self.color_map = color_map
+    
+    def set_rectangle_color(self, color):
+        self.rectangle_color = color
 
     def get_model_output(self,images, model=None):
         if model is None:
@@ -48,9 +82,8 @@ class ImageComparisonGenerator:
         mask_vis = mask.copy()
         
         if num_classes > 1:
-            color_map = {0:[0.9,0.9,0],1:[0.3,0.3,1],2:[0.9,0,0.9]}
             mask_rgb = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.float32)
-            for class_val, color in color_map.items():
+            for class_val, color in self.color_map.items():
                 mask_rgb[mask == class_val] = color
             mask_rgb[ignore_mask] = [0.8,0.8,0.8]
             mask_vis = mask_rgb
@@ -58,10 +91,11 @@ class ImageComparisonGenerator:
             mask_vis[ignore_mask] = -1
         return mask_vis, ignore_mask
 
-    def _prepare_prediction_vis(self, output, mask, num_classes=1, do_diff=True, invert_diff_colors=False, ignore_mask=None):
+    def _prepare_prediction_vis(self, output, mask, num_classes=1, do_diff=True, invert_diff_colors=False, ignore_mask=None, diff_mode=DiffMode.DIAGONAL_DOTS_WITH_BORDER):
         if num_classes == 1:
             out_sigmoid = torch.sigmoid(output[0])
             pred = (out_sigmoid > 0.5).float().cpu().squeeze().numpy()
+            num_classes = 2
         else:
             out_softmax = torch.softmax(output[0], dim=0)
             pred = torch.argmax(out_softmax, dim=0).cpu().numpy()
@@ -73,33 +107,57 @@ class ImageComparisonGenerator:
                 h, w, _ = mask.shape
 
             diff_img = np.zeros((h, w, 3), dtype=np.float32)
-            if num_classes == 1:
-                tp = (pred == 1) & (mask == 1)
-                fn = (pred == 0) & (mask == 1)
-                fp = (pred == 1) & (mask == 0)
-                if invert_diff_colors:
+            
+            # First, paint everything with the expected class.
+            for class_id in range(num_classes):
+                pred_mask_cls = (pred == class_id)
+                diff_img[pred_mask_cls] = self.color_map.get(class_id,[1,1,1])
+
+            # Then paint only real errors in red (ignoring 255)
+            # Wherever the value 255 is, it will not be painted red, preserving
+            # what was predicted by the model
+            mismatches = (mask != pred) & (~ignore_mask)
+            rows, cols = np.indices((h, w))
+            if diff_mode in [DiffMode.DIAGONAL_DOTS_WITH_BORDER, DiffMode.DIAGONAL_DOTS]:
+                checker_pattern = (rows - cols) % 4 == 0 # diagonal
+            elif diff_mode in [DiffMode.HORIZONTAL_DOTS_WITH_BORDER, DiffMode.HORIZONTAL_DOTS]:
+                checker_pattern = rows % 2 == 0 # horizontal
+            elif diff_mode in [DiffMode.SPARSE_DOTS_WITH_BORDER, DiffMode.SPARSE_DOTS]:
+                checker_pattern = (rows % 3 == 0) & (cols % 3 == 0) # sparse
+            elif diff_mode in [DiffMode.THIN_DOTS_WITH_BORDER, DiffMode.THIN_DOTS]:
+                checker_pattern = (rows + cols) % 2 == 0 # thin              
+            
+            # Old mode
+            if diff_mode == DiffMode.APPLY_RED:
+                # if its binary
+                if num_classes == 2:
+                    tp = (pred == 1) & (mask == 1)
+                    fn = (pred == 0) & (mask == 1)
+                    fp = (pred == 1) & (mask == 0)
                     diff_img[tp] = [1,1,1]
                     diff_img[fp] = [1,0.5,0]
                     diff_img[fn] = [1,0,0]
                 else:
-                    diff_img[tp] = [1,1,1]
-                    diff_img[fn] = [1,0.5,0]
-                    diff_img[fp] = [1,0,0]
+                    diff_img[mismatches] = [1,0,0]
+            # Red with alpha
+            elif diff_mode == DiffMode.APPLY_RED_WITH_ALPHA:
+                diff_img[mismatches] = 0.5 * diff_img[mismatches] + 0.5 * np.array([1,0,0])
             else:
-                color_map = {0:[0.9,0.9,0],1:[0.3,0.3,1],2:[0.9,0,0.9]}
-                mismatches = (mask != pred)
-                mismatches[ignore_mask] = False
-                for cls in range(num_classes):
-                    cls_mask = (mask == cls) & (pred == cls)
-                    diff_img[cls_mask] = color_map.get(cls,[1,1,1])
-                diff_img[mismatches] = [1,0,0]
-                diff_img[ignore_mask] = [0.8,0.8,0.8]
+            # Dotted patterns
+                dotted_errors = mismatches & checker_pattern
+                diff_img[dotted_errors] = [1, 0, 0]
+
+            # Border
+            if diff_mode in [DiffMode.DIAGONAL_DOTS_WITH_BORDER, DiffMode.HORIZONTAL_DOTS_WITH_BORDER, DiffMode.SPARSE_DOTS_WITH_BORDER, DiffMode.THIN_DOTS_WITH_BORDER]:
+                eroded = binary_erosion(mismatches)
+                border = mismatches & (~eroded)
+                diff_img[border] = [1, 0, 0]
+                
             return diff_img
         else:
             if num_classes > 1:
-                color_map = {0:[0.9,0.9,0],1:[0.3,0.3,1],2:[0.9,0,0.9]}
                 pred_vis = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.float32)
-                for class_val, color in color_map.items():
+                for class_val, color in self.color_map.items():
                     pred_vis[pred == class_val] = color
                 return pred_vis
             else:
@@ -118,19 +176,31 @@ class ImageComparisonGenerator:
     # print images in list
     def save_output_row(self, sample_loader, samples=[0],
                         num_classes=1, do_diff=True, invert_diff_colors=False,
-                        do_save=False, font_size=22):
+                        do_save=False, font_size=22,  figsize=(None,None), 
+                        diff_mode=DiffMode.DIAGONAL_DOTS_WITH_BORDER,
+                        rectangles=None, arrows=None,):
         if self.model is None:
             raise Exception("The model is not loaded.")
 
         device = next(self.model.parameters()).device
+        num_rows = len(samples)
+
         self.model.eval()
+        fig_width = 11
+        fig_height = 3*num_rows
         if self.model2 is not None:
             self.model2.eval()
+            fig_width = 16
+            fig_height = 3*num_rows
         if self.model3 is not None:
             self.model3.eval()
+            fig_width = 22
+            fig_height = 4*num_rows
 
-        num_rows = len(samples)
-        fig = plt.figure(figsize=(11, 2*num_rows))
+        if figsize == (None, None):
+            figsize = (fig_width, fig_height)
+            
+        fig = plt.figure(figsize=figsize)
 
         with torch.no_grad():
             for idx, sample_idx in enumerate(samples):
@@ -139,31 +209,34 @@ class ImageComparisonGenerator:
                 mask = mask.cpu().squeeze().numpy()
 
                 mask_vis, ignore_mask = self._prepare_mask_vis(mask, num_classes)
-                pred_vis = self._prepare_prediction_vis(self.get_model_output(img), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
+                pred_vis = self._prepare_prediction_vis(self.get_model_output(img), mask, num_classes, do_diff, invert_diff_colors, ignore_mask, diff_mode=diff_mode)
                 img_disp = self._prepare_image_disp(img)
                 
 
                 # Model 2 prediction, if it exists
                 if self.model2 is not None:
                     img2 = img.to(device)
-                    pred2_vis = self._prepare_prediction_vis(self.get_model_output(img2, model=self.model2), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
+                    pred2_vis = self._prepare_prediction_vis(self.get_model_output(img2, model=self.model2), mask, num_classes, do_diff, invert_diff_colors, ignore_mask, diff_mode=diff_mode)
                     num_cols = 4
 
 
                     # Model 3 prediction, if it exists
                     if self.model3 is not None:
                         img3 = img.to(device)
-                        pred3_vis = self._prepare_prediction_vis(self.get_model_output(img3, model=self.model3), mask, num_classes, do_diff, invert_diff_colors, ignore_mask)
+                        pred3_vis = self._prepare_prediction_vis(self.get_model_output(img3, model=self.model3), mask, num_classes, do_diff, invert_diff_colors, ignore_mask, diff_mode=diff_mode)
                         num_cols = 5
+                        enum_list = [img_disp, mask_vis, pred_vis, pred2_vis, pred3_vis]
                     else:
                         pred3_vis = None
+                        enum_list = [img_disp, mask_vis, pred_vis, pred2_vis]
                 else:
                     pred2_vis = None
                     pred3_vis = None
                     num_cols = 3
+                    enum_list = [img_disp, mask_vis, pred_vis]
 
 
-                for col, im in enumerate([img_disp, mask_vis, pred_vis, pred2_vis, pred3_vis]):
+                for col, im in enumerate(enum_list):
                     ax = fig.add_axes([col/num_cols, 1-(idx+1)/num_rows, 1/num_cols, 1/num_rows])
                     ax.imshow(im, cmap='gray' if num_classes==1 else None, aspect='auto')
                     ax.set_xticks([]); ax.set_yticks([])
@@ -183,7 +256,13 @@ class ImageComparisonGenerator:
                         elif col == 4:
                             ax.set_title(self.model_name3, fontsize=font_size, y=1.0)
 
-        plt.tight_layout(rect=[0,0,1,0.96])
+        # draw rects and arrows
+        if rectangles is not None:
+            self._draw_rectangles(fig, rectangles)
+        if arrows is not None:
+            self._draw_arrows(fig, arrows)
+
+        #plt.tight_layout(rect=[0,0,1,0.96])
         if do_save: fig.savefig(do_save, format='eps', bbox_inches='tight', pad_inches=0.1)
         else: plt.show()
 
@@ -193,7 +272,8 @@ class ImageComparisonGenerator:
                         do_save=False,
                         figsize=(10,10),
                         vertical_gap=0.13,
-                        before_plot=None):
+                        before_plot=None, diff_mode=DiffMode.DIAGONAL_DOTS_WITH_BORDER,
+                        rectangles=None, arrows=None):
         if self.model is None:
             raise Exception("The model is not loaded.")
 
@@ -216,7 +296,7 @@ class ImageComparisonGenerator:
                 # Model 1 Prediction
                 pred1_vis = self._prepare_prediction_vis(
                     self.get_model_output(img, model=self.model), 
-                    mask_np, num_classes, do_diff, invert_diff_colors, ignore_mask
+                    mask_np, num_classes, do_diff, invert_diff_colors, ignore_mask, diff_mode=diff_mode
                 )
                 img_disp = self._prepare_image_disp(img)
 
@@ -225,7 +305,7 @@ class ImageComparisonGenerator:
                     img2 = img.to(device)
                     pred2_vis = self._prepare_prediction_vis(
                         self.get_model_output(img2, model=self.model2),
-                        mask_np, num_classes, do_diff, invert_diff_colors, ignore_mask
+                        mask_np, num_classes, do_diff, invert_diff_colors, ignore_mask, diff_mode=diff_mode
                     )
                 else:
                     pred2_vis = None
@@ -256,15 +336,56 @@ class ImageComparisonGenerator:
                     font_size = 30
                     ax.set_title(title, fontsize=font_size, y=1.0)
 
-        plt.tight_layout(rect=[0,0,1,0.96])
+
+        # draw rects and arrows
+        if rectangles is not None:
+            self._draw_rectangles(fig, rectangles)
+        if arrows is not None:
+            self._draw_arrows(fig, arrows)
+
+        
         if do_save:
             fig.savefig(do_save, format='eps', bbox_inches='tight', pad_inches=0.1)
         else:
             plt.show()
 
 
+    rect_thickness = 2
+    def _draw_rectangles(self,fig,rectangles):
+        for rect in rectangles:
+            (x, y), (w, h) = rect
+            y_corr = 1 - y - h
+            rectangle = patches.Rectangle(
+                (x, y_corr), w, h,
+                linewidth=self.rect_thickness,
+                edgecolor=self.rectangle_color,
+                facecolor='none',
+                transform=fig.transFigure,
+                clip_on=False
+            )
+
+            fig.add_artist(rectangle)
 
 
+    arrow_thickness = 4
+    arrow_head_size = 30
+
+    def _draw_arrows(self, fig, arrows):
+        for (x1, y1), (x2, y2) in arrows:
+            y1_mpl = 1 - y1
+            y2_mpl = 1 - y2
+            arrow = patches.FancyArrowPatch(
+                (x1, y1_mpl),
+                (x2, y2_mpl),
+                arrowstyle='->',
+                mutation_scale=self.arrow_head_size,
+                color=self.rectangle_color,
+                linewidth=self.arrow_thickness,
+                transform=fig.transFigure,
+                zorder=1000
+            )
+
+            fig.patches.append(arrow)
 
 
 # In[ ]:
