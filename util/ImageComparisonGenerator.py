@@ -36,6 +36,8 @@ class ImageComparisonGenerator:
                  2:[0.7, 0.7, 1.0]}
     rectangle_color = (0.2, 0.8, 0.2)
 
+    font_size = 35
+
     def __init__(self, model, model_name1="Prediction", model2=None, model_name2="Prediction", model3=None, model_name3="Prediction", color_map=None):
         self.model  = model
         self.model_name1 = model_name1
@@ -176,7 +178,7 @@ class ImageComparisonGenerator:
     # print images in list
     def save_output_row(self, sample_loader, samples=[0],
                         num_classes=1, do_diff=True, invert_diff_colors=False,
-                        do_save=False, font_size=22,  figsize=(None,None), 
+                        do_save=False, figsize=(None,None), 
                         diff_mode=DiffMode.DIAGONAL_DOTS_WITH_BORDER,
                         rectangles=None, arrows=None,):
         if self.model is None:
@@ -247,14 +249,14 @@ class ImageComparisonGenerator:
                         spine.set_linewidth(1.5)
 
                     if idx==0:
-                        if col==0: ax.set_title("Image", fontsize=font_size, y=1.0)
-                        elif col==1: ax.set_title("Ground Truth", fontsize=font_size, y=1.0)
+                        if col==0: ax.set_title("Image", fontsize=self.font_size, y=1.0)
+                        elif col==1: ax.set_title("Ground Truth", fontsize=self.font_size, y=1.0)
                         elif col == 2:
-                            ax.set_title(self.model_name1, fontsize=font_size, y=1.0)
+                            ax.set_title(self.model_name1, fontsize=self.font_size, y=1.0)
                         elif col == 3:
-                            ax.set_title(self.model_name2, fontsize=font_size, y=1.0)
+                            ax.set_title(self.model_name2, fontsize=self.font_size, y=1.0)
                         elif col == 4:
-                            ax.set_title(self.model_name3, fontsize=font_size, y=1.0)
+                            ax.set_title(self.model_name3, fontsize=self.font_size, y=1.0)
 
         # draw rects and arrows
         if rectangles is not None:
@@ -333,8 +335,8 @@ class ImageComparisonGenerator:
                         spine.set_visible(True)
                         spine.set_edgecolor('black')
                         spine.set_linewidth(1.5)
-                    font_size = 30
-                    ax.set_title(title, fontsize=font_size, y=1.0)
+                    
+                    ax.set_title(title, fontsize=self.font_size, y=1.0)
 
 
         # draw rects and arrows
@@ -350,7 +352,7 @@ class ImageComparisonGenerator:
             plt.show()
 
 
-    rect_thickness = 2
+    rect_thickness = 4
     def _draw_rectangles(self,fig,rectangles):
         for rect in rectangles:
             (x, y), (w, h) = rect
